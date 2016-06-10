@@ -26,7 +26,8 @@
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
-    <artifactId>net.tehcable.sonarpet</artifactId>
+    <groupId>net.techcable</groupId>
+    <artifactId>sonarpet</artifactId>
     <name>SonarPet</name>
     <packaging>jar</packaging>
     <url>https://www.spigotmc.org/resources/sonarpets.20523/</url>
