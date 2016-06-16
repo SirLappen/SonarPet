@@ -46,16 +46,24 @@ import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
+import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginDescriptionFile;
 import org.bukkit.plugin.PluginManager;
-import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 
-public class EchoPetPlugin extends JavaPlugin implements IEchoPetPlugin {
+import net.techcable.sonarpet.BootstrapedPlugin;
+
+public class EchoPetPlugin extends BootstrapedPlugin implements IEchoPetPlugin {
+
+
+    public EchoPetPlugin(Plugin delegate) {
+        super(delegate);
+    }
+
 
     private static boolean isUsingNetty;
 

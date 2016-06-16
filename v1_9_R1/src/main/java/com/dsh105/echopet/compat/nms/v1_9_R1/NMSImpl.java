@@ -18,7 +18,6 @@
 package com.dsh105.echopet.compat.nms.v1_9_R1;
 
 import java.util.Objects;
-import java.util.Optional;
 
 import com.dsh105.echopet.compat.api.entity.IPet;
 import com.dsh105.echopet.compat.api.event.PetPreSpawnEvent;

@@ -42,6 +42,7 @@
         <module>v1_9_R2</module>
         <module>v1_10_R1</module>
         <module>core</module>
+        <module>bootstrap</module>
     </modules>
 
     <dependencies>
@@ -60,7 +61,7 @@
         <dependency>
             <groupId>com.dsh105</groupId>
             <artifactId>Commodus</artifactId>
-            <version>1.0.4</version>
+            <version>1.0.5</version>
             <exclusions>
                 <exclusion>
                     <groupId>com.captainbern</groupId>
