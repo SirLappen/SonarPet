@@ -37,6 +37,7 @@ public class Versioning {
         return NMS_VERSION != null;
     }
 
+    //ToDo: Version Fix Here
     @Getter
     public enum NmsVersion {
         v1_6_R3,
@@ -46,9 +47,9 @@ public class Versioning {
         v1_7_R4,
         v1_8_R1,
         v1_8_R2,
-        v1_8_R3,
         v1_9_R1,
-        v1_9_R2;
+        v1_9_R2,
+        v1_10_R1;
 
         public static final NmsVersion LATEST;
 
