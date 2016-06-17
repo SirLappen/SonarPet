@@ -1,0 +1,539 @@
+/*
+ * This file is part of EchoPet.
+ *
+ * EchoPet is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * EchoPet is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with EchoPet.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+package com.dsh105.echopet.compat.nms.v1_10_R1.entity;
+
+import java.util.ArrayList;
+import java.util.Random;
+import java.util.function.BiConsumer;
+
+import com.dsh105.echopet.compat.api.ai.PetGoalSelector;
+import com.dsh105.echopet.compat.api.entity.EntityPetType;
+import com.dsh105.echopet.compat.api.entity.EntitySize;
+import com.dsh105.echopet.compat.api.entity.IEntityPet;
+import com.dsh105.echopet.compat.api.entity.PetType;
+import com.dsh105.echopet.compat.api.entity.SizeCategory;
+import com.dsh105.echopet.compat.api.event.PetAttackEvent;
+import com.dsh105.echopet.compat.api.event.PetRideJumpEvent;
+import com.dsh105.echopet.compat.api.event.PetRideMoveEvent;
+import com.dsh105.echopet.compat.api.plugin.EchoPet;
+import com.dsh105.echopet.compat.api.util.Logger;
+import com.dsh105.echopet.compat.api.util.MenuUtil;
+import com.dsh105.echopet.compat.api.util.Perm;
+import com.dsh105.echopet.compat.api.util.menu.MenuOption;
+import com.dsh105.echopet.compat.api.util.menu.PetMenu;
+import com.dsh105.echopet.compat.nms.v1_10_R1.NMS;
+import com.dsh105.echopet.compat.nms.v1_10_R1.NMSEntityUtil;
+import com.dsh105.echopet.compat.nms.v1_10_R1.entity.ai.PetGoalFloat;
+import com.dsh105.echopet.compat.nms.v1_10_R1.entity.ai.PetGoalFollowOwner;
+import com.dsh105.echopet.compat.nms.v1_10_R1.entity.ai.PetGoalLookAtPlayer;
+import com.dsh105.echopet.compat.nms.v1_10_R1.metadata.WrappedDataWatcher;
+import com.google.common.base.Preconditions;
+
+import net.minecraft.server.v1_10_R1.Block;
+import net.minecraft.server.v1_10_R1.BlockPosition;
+import net.minecraft.server.v1_10_R1.DamageSource;
+import net.minecraft.server.v1_10_R1.DataWatcher;
+import net.minecraft.server.v1_10_R1.Entity;
+import net.minecraft.server.v1_10_R1.EntityHuman;
+import net.minecraft.server.v1_10_R1.EntityInsentient;
+import net.minecraft.server.v1_10_R1.EntityLiving;
+import net.minecraft.server.v1_10_R1.EntityPlayer;
+import net.minecraft.server.v1_10_R1.IAnimal;
+import net.minecraft.server.v1_10_R1.NBTTagCompound;
+import net.minecraft.server.v1_10_R1.SoundEffect;
+import net.techcable.sonarpet.utils.reflection.SonarField;
+
+import org.bukkit.Location;
+import org.bukkit.Sound;
+import org.bukkit.craftbukkit.v1_10_R1.CraftSound;
+import org.bukkit.craftbukkit.v1_10_R1.entity.CraftLivingEntity;
+import org.bukkit.craftbukkit.v1_10_R1.entity.CraftPlayer;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
+import org.bukkit.util.Vector;
+
+import static com.dsh105.echopet.compat.nms.v1_10_R1.NMS.*;
+
+public interface EntityInsentientPet extends IAnimal, IEntityPet {
+
+    public EntityInsentient getEntity();
+
+    public EntityInsentientPetData getNmsData();
+
+    public default WrappedDataWatcher getDatawatcher() {
+        return new WrappedDataWatcher(getEntity().getDataWatcher());
+    }
+
+    /**
+     * @deprecated use the wrapper
+     */
+    @Deprecated
+    public default DataWatcher getDataWatcher() {
+        return getEntity().getDataWatcher();
+    }
+
+    /**
+     * The field to check if the entity is jumping.
+     * Uses reflection to bypass access checks
+     */
+    public static final SonarField<Boolean> IS_JUMPING_FIELD = SonarField.getField(EntityLiving.class, "be", boolean.class);
+
+    public default void initiateEntityPet() {
+        this.resetEntitySize();
+        getNmsData().fireProof = true;
+        this.getBukkitEntity().setMaxHealth(getPet().getPetType().getMaxHealth());
+        getEntity().setHealth((float) getPet().getPetType().getMaxHealth());
+        getNmsData().jumpHeight = EchoPet.getOptions().getRideJumpHeight(this.getPet().getPetType());
+        getNmsData().rideSpeed = EchoPet.getOptions().getRideSpeed(this.getPet().getPetType());
+        this.setPathfinding();
+    }
+
+    public default PetType getEntityPetType() {
+        EntityPetType entityPetType = this.getClass().getAnnotation(EntityPetType.class);
+        if (entityPetType != null) {
+            return entityPetType.petType();
+        }
+        return null;
+    }
+
+    public default void stopRiding() {} // Pets are being secretly dismounted, so we have to block it here
+
+    public default boolean startRiding(Entity entity) { // Don't mount boats.......
+        return false;
+    }
+
+    public default void reallyStopRiding() {
+        getEntity().stopRiding();
+    }
+
+    @Override
+    public default void resizeBoundingBox(boolean flag) {
+        EntitySize es = this.getClass().getAnnotation(EntitySize.class);
+        if (es != null) {
+            getEntity().setSize(flag ? (es.width() / 2) : es.width(), flag ? (es.height() / 2) : es.height());
+        }
+    }
+
+    @Override
+    public default void resetEntitySize() {
+        EntitySize es = this.getClass().getAnnotation(EntitySize.class);
+        if (es != null) {
+            getEntity().setSize(es.width(), es.height());
+        }
+    }
+
+    @Override
+    public default void setEntitySize(float width, float height) {
+        getEntity().setSize(width, height);
+    }
+
+    public default boolean isPersistent() {
+        return true;
+    }
+
+    public default Player getPlayerOwner() {
+        return getPet().getOwner();
+    }
+
+    public default Location getLocation() {
+        return getPet().getLocation();
+    }
+
+    public default void setVelocity(Vector vel) {
+        getEntity().motX = vel.getX();
+        getEntity().motY = vel.getY();
+        getEntity().motZ = vel.getZ();
+        getEntity().velocityChanged = true;
+    }
+
+    public Random random();
+
+    @Override
+    public default PetGoalSelector getPetGoalSelector() {
+        return getNmsData().petGoalSelector;
+    }
+
+    @Override
+    public default boolean isDead() {
+        return getEntity().dead;
+    }
+
+    @Override
+    public default void setShouldVanish(boolean flag) {
+        getNmsData().shouldVanish = flag;
+    }
+
+    @Override
+    public default void setTarget(LivingEntity livingEntity) {
+        getEntity().setGoalTarget(((CraftLivingEntity) livingEntity).getHandle());
+    }
+
+    @Override
+    public default LivingEntity getTarget() {
+        return (LivingEntity) getEntity().getGoalTarget().getBukkitEntity();
+    }
+
+    public default boolean attack(Entity entity) {
+        return this.attack(entity, (float) this.getPet().getPetType().getAttackDamage());
+    }
+
+    public default boolean attack(Entity entity, float damage) {
+        return this.attack(entity, DamageSource.mobAttack(getEntity()), damage);
+    }
+
+    public default boolean attack(Entity entity, DamageSource damageSource, float damage) {
+        PetAttackEvent attackEvent = new PetAttackEvent(this.getPet(), entity.getBukkitEntity(), damage);
+        EchoPet.getPlugin().getServer().getPluginManager().callEvent(attackEvent);
+        if (!attackEvent.isCancelled()) {
+            if (entity instanceof EntityPlayer) {
+                if (!(EchoPet.getConfig().getBoolean("canAttackPlayers", false))) {
+                    return false;
+                }
+            }
+            return entity.damageEntity(damageSource, (float) attackEvent.getDamage());
+        }
+        return false;
+    }
+
+    public void setGoalTarget(EntityLiving goalTarget);
+
+    public EntityLiving getGoalTarget();
+
+    public default void setPathfinding() {
+        try {
+            NMSEntityUtil.clearGoals(this);
+            getNmsData().petGoalSelector = new PetGoalSelector();
+
+            getNmsData().petGoalSelector.addGoal(new PetGoalFloat(this), 0);
+            getNmsData().petGoalSelector.addGoal(new PetGoalFollowOwner(this, this.getSizeCategory().getStartWalk(getPet().getPetType()), this.getSizeCategory().getStopWalk(getPet().getPetType()), this.getSizeCategory().getTeleport(getPet().getPetType())), 1);
+            getNmsData().petGoalSelector.addGoal(new PetGoalLookAtPlayer(this, EntityHuman.class), 2);
+
+        } catch (Exception e) {
+            Logger.log(Logger.LogLevel.WARNING, "Could not add PetGoals to Pet AI.", e, true);
+        }
+    }
+
+    @Override
+    public CraftLivingEntity getBukkitEntity();
+
+    // well then...it's now 'final'
+
+    /*
+    // Overriden from EntityInsentient - Most importantly overrides pathfinding selectors
+    @Override
+    protected final void doTick() {
+        super.doTick();
+        ++this.ticksFarFromPlayer;
+
+        this.D();
+
+        this.getEntitySenses().a();
+
+        // If this ever happens...
+        if (this.petGoalSelector == null) {
+            this.remove(false);
+            return;
+        }
+        this.petGoalSelector.updateGoals();
+
+        this.navigation.k();
+
+        this.E();
+
+        this.getControllerMove().c();
+
+        this.getControllerLook().a();
+
+        this.getControllerJump().b();
+    }
+    */
+
+    @Override
+    public default boolean onInteract(Player p) {
+        if (p.getUniqueId().equals(getPlayerOwner().getUniqueId())) {
+            if (EchoPet.getConfig().getBoolean("pets." + this.getPet().getPetType().toString().toLowerCase().replace("_", " ") + ".interactMenu", true) && Perm.BASE_MENU.hasPerm(this.getPlayerOwner(), false, false)) {
+                ArrayList<MenuOption> options = MenuUtil.createOptionList(getPet().getPetType());
+                int size = this.getPet().getPetType() == PetType.HORSE ? 18 : 9;
+                PetMenu menu = new PetMenu(getPet(), options, size);
+                menu.open(false);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    public default boolean a(EntityHuman human) {
+        return onInteract((Player) human.getBukkitEntity());
+    }
+
+    public default void setPositionRotation(double d0, double d1, double d2, float f, float f1) {
+        getEntity().setPositionRotation(d0, d1, d2, f, f1);
+    }
+
+    public default void setLocation(Location l) {
+        Preconditions.checkArgument(l.getWorld().equals(this.getBukkitEntity().getWorld()), "Location world %s doesn't match entity world %s", l.getWorld(), getBukkitEntity().getWorld());
+        this.setPositionRotation(l.getX(), l.getY(), l.getZ(), l.getYaw(), l.getPitch());
+    }
+
+    public default void teleport(Location l) {
+        this.getPet().getCraftPet().teleport(l);
+    }
+
+    @Override
+    public default void remove(boolean makeSound) {
+        if (this.getBukkitEntity() != null) {
+            getBukkitEntity().remove();
+        }
+        if (makeSound) {
+            playSound(getDeathSound(), 1.0F, 1.0F);
+        }
+    }
+
+    public default void playSound(Sound bukkitSound, float volume, float pitch) {// A Happy Utility :D
+        SoundEffect mojangSound = CraftSound.getSoundEffect(CraftSound.getSound(bukkitSound));
+        NMS.playSound(getEntity(), mojangSound, volume, pitch);
+    }
+
+    public default void onLive() {
+        if (this.getPet() == null) {
+            this.remove(false);
+            return;
+        }
+
+        if (this.getPlayerOwner() == null || !this.getPlayerOwner().isOnline()) {
+            EchoPet.getManager().removePet(this.getPet(), true);
+            return;
+        }
+
+        if (getPet().isOwnerRiding() && getEntity().passengers.isEmpty() && !getPet().isOwnerInMountingProcess()) {
+            getPet().ownerRidePet(false);
+        }
+
+        if (((CraftPlayer) this.getPlayerOwner()).getHandle().isInvisible() != getEntity().isInvisible() && !getNmsData().shouldVanish) {
+            this.setInvisible(!getEntity().isInvisible());
+        }
+
+        if (((CraftPlayer) this.getPlayerOwner()).getHandle().isSneaking() != getEntity().isSneaking()) {
+            getEntity().setSneaking(!getEntity().isSneaking());
+        }
+
+        if (((CraftPlayer) this.getPlayerOwner()).getHandle().isSprinting() != getEntity().isSprinting()) {
+            getEntity().setSprinting(!getEntity().isSprinting());
+        }
+
+        if (this.getPet().isHat()) {
+            getEntity().lastYaw = getEntity().yaw = (this.getPet().getPetType() == PetType.ENDERDRAGON ? this.getPlayerOwner().getLocation().getYaw() - 180 : this.getPlayerOwner().getLocation().getYaw());
+        }
+
+        if (this.getPlayerOwner().isFlying() && EchoPet.getOptions().canFly(this.getPet().getPetType())) {
+            Location petLoc = this.getLocation();
+            Location ownerLoc = this.getPlayerOwner().getLocation();
+            Vector v = ownerLoc.toVector().subtract(petLoc.toVector());
+
+            double x = v.getX();
+            double y = v.getY();
+            double z = v.getZ();
+
+            Vector vo = this.getPlayerOwner().getLocation().getDirection();
+            if (vo.getX() > 0) {
+                x -= 1.5;
+            } else if (vo.getX() < 0) {
+                x += 1.5;
+            }
+            if (vo.getZ() > 0) {
+                z -= 1.5;
+            } else if (vo.getZ() < 0) {
+                z += 1.5;
+            }
+
+            this.setVelocity(new Vector(x, y, z).normalize().multiply(0.3F));
+        }
+
+
+        if (getNmsData().petGoalSelector == null) {
+            this.remove(false);
+            return;
+        }
+        if (getPet().getRider() == null) {
+            getNmsData().petGoalSelector.updateGoals();
+        }
+    }
+
+    /**
+     * Return if the pet's owner is currently riding the pet
+     *
+     * @return if the owner is riding
+     */
+    public default boolean isOwnerRiding() {
+        for (Entity passenger : getEntity().passengers) {
+            if (passenger == NMS.getHandle(getPlayerOwner())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public void setYawPitch(float yaw, float pitch);
+
+    // EntityLiving
+    /*
+     * We need to override the move logic for special handling when the owner is riding
+     */
+    public default void move(float sideMot, float forwMot, BiConsumer<Float, Float> superMoveFunction) {
+        Preconditions.checkNotNull(superMoveFunction, "Null superMoveFunction");
+        if (!isOwnerRiding()) {
+            superMoveFunction.accept(sideMot, forwMot); // moveEntity
+            getEntity().P = 0.5F; // set the step hight to half a blog, like mobs
+            return;
+        }
+
+        getEntity().P = 1.0F; // Grant the pet a step height of a full block since they have a player riding them
+
+        getEntity().lastYaw = getEntity().yaw = NMS.getHandle(getPlayerOwner()).yaw;
+        getEntity().pitch = NMS.getHandle(getPlayerOwner()).pitch * 0.5F;
+        this.setYawPitch(getEntity().yaw, getEntity().pitch);
+        /**
+         * Set the 'offsets' for pitch and yaw to the same value as the yaw itself.
+         * Apparently this is needed to set rotation.
+         * See EntityLiving.h(FF) for details (method profiler 'headTurn')
+         */
+        getEntity().aM = getEntity().aG = getEntity().yaw;
+
+        sideMot = getSidewaysMotion(NMS.getHandle(getPlayerOwner())) * 0.5F;
+        forwMot = getForwardsMotion(NMS.getHandle(getPlayerOwner()));
+
+        if (forwMot <= 0.0F) {
+            forwMot *= 0.25F; // quarter speed backwards
+        }
+        sideMot *= 0.75F; // 75% slower sideways
+
+        PetRideMoveEvent moveEvent = new PetRideMoveEvent(this.getPet(), forwMot, sideMot);
+        EchoPet.getPlugin().getServer().getPluginManager().callEvent(moveEvent);
+        if (moveEvent.isCancelled()) {
+            return;
+        }
+
+        getEntity().l(getNmsData().rideSpeed); // set the movement speed
+        superMoveFunction.accept(moveEvent.getSidewardMotionSpeed(), moveEvent.getForwardMotionSpeed()); // superclass movement logic, with the speed from the movement event
+
+        PetType pt = this.getPet().getPetType();
+        if (IS_JUMPING_FIELD != null) {
+            if (EchoPet.getOptions().canFly(pt)) {
+                try {
+                    if (NMS.getHandle(getPlayerOwner()).getBukkitEntity().isFlying()) {
+                        NMS.getHandle(getPlayerOwner()).getBukkitEntity().setFlying(false);
+                    }
+                    if (IS_JUMPING_FIELD.getValue(NMS.getHandle(getPlayerOwner()))) {
+                        PetRideJumpEvent rideEvent = new PetRideJumpEvent(this.getPet(), getNmsData().jumpHeight);
+                        EchoPet.getPlugin().getServer().getPluginManager().callEvent(rideEvent);
+                        if (!rideEvent.isCancelled()) {
+                            getEntity().motY = 0.5F;
+                        }
+                    }
+                } catch (IllegalArgumentException | IllegalStateException e) {
+                    Logger.log(Logger.LogLevel.WARNING, "Failed to initiate Pet Flying Motion for " + this.getPlayerOwner().getName() + "'s Pet.", e, true);
+                }
+            } else if (getEntity().onGround) {
+                try {
+                    if (IS_JUMPING_FIELD.getValue(NMS.getHandle(getPlayerOwner()))) {
+                        PetRideJumpEvent rideEvent = new PetRideJumpEvent(this.getPet(), getNmsData().jumpHeight);
+                        EchoPet.getPlugin().getServer().getPluginManager().callEvent(rideEvent);
+                        if (!rideEvent.isCancelled()) {
+                            getEntity().motY = rideEvent.getJumpHeight();
+                            doJumpAnimation();
+                        }
+                    }
+                } catch (IllegalArgumentException | IllegalStateException e) {
+                    Logger.log(Logger.LogLevel.WARNING, "Failed to initiate Pet Jumping Motion for " + this.getPlayerOwner().getName() + "'s Pet.", e, true);
+                }
+            }
+        }
+    }
+
+    public default SoundEffect G() {
+        return fromBukkit(this.getIdleSound());
+    }
+
+    public default SoundEffect bV() {
+        return fromBukkit(this.getDeathSound());
+    }
+
+    public Sound getIdleSound(); //idle sound
+
+    public Sound getDeathSound(); //death sound
+
+    @Override
+    public abstract SizeCategory getSizeCategory();
+
+    // Entity
+
+    public default void onStep(BlockPosition blockposition, Block block) {
+        makeStepSound(blockposition.getX(), blockposition.getY(), blockposition.getZ(), block);
+    }
+
+    public default void makeStepSound(int i, int j, int k, Block block) {
+        this.makeStepSound();
+    }
+
+    public default void makeStepSound() {}
+
+    public default void doJumpAnimation() {}
+
+    /*
+     * Why are there multiple write and read methods?
+     * NEVER ASK, OR YOU'LL GO CRAZY!!
+     */
+    public default void b(NBTTagCompound nbttagcompound) { // write to nbt
+        // Do nothing with NBT
+        // Pets should not be stored to world save files
+    }
+
+    public default boolean c(NBTTagCompound nbttagcompound) { // writeToNBT
+        // Do nothing with NBT
+        // Pets should not be stored to world save files
+        return false;
+    }
+
+    public default void a(NBTTagCompound nbttagcompound) { // readFromNBT
+        // Do nothing with NBT
+        // Pets should not be stored to world save files
+
+        /*super.a(nbttagcompound);
+        String owner = nbttagcompound.getString("EchoPet_OwnerName");
+        PetType pt = this.getEntityPetType();
+        if (pt != null) {
+            this.pet = pt.getNewPetInstance(owner, this);
+            if (this.pet != null) {
+                EchoPet.getManager().loadRiderFromFile(this.getPet());
+                this.initiateEntityPet();
+            }
+        }*/
+    }
+
+    public default boolean d(NBTTagCompound nbttagcompound) { // writeToNBT
+        // Do nothing with NBT
+        // Pets should not be stored to world save files
+        return false;
+    }
+
+    public default NBTTagCompound e(NBTTagCompound nbttagcompound) { // writeToNBT
+        // Do nothing with NBT
+        // Pets should not be stored to world save files
+        return nbttagcompound;
+    }
+}
